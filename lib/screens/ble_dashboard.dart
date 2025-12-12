@@ -21,18 +21,28 @@ class _BleDashboardState extends State<BleDashboard> with SingleTickerProviderSt
 
   List<ScanResult> _foundDevices = [];
   BluetoothDevice? _connectedDevice;
-  bool _isConnecting = false;
+  BluetoothConnectionState _connectionState = BluetoothConnectionState.disconnected;
 
   String get _connectionStatus {
-    if (_connectedDevice != null) {
-      return 'Connected to ${_connectedDevice!.platformName.isNotEmpty ? _connectedDevice!.platformName : _connectedDevice!.remoteId}';
+    switch (_connectionState) {
+      case BluetoothConnectionState.connecting:
+        return 'Connecting...';
+      case BluetoothConnectionState.connected:
+        if (_connectedDevice != null) {
+          final deviceName = _connectedDevice!.platformName.isNotEmpty
+              ? _connectedDevice!.platformName
+              : _connectedDevice!.remoteId;
+          return 'Connected to $deviceName';
+        }
+        return 'Connected';
+      case BluetoothConnectionState.disconnected:
+        return FlutterBluePlus.isScanningNow ? 'Scanning nearby...' : 'Disconnected';
+      case BluetoothConnectionState.disconnecting:
+        return 'Disconnecting...';
     }
-    if (_isConnecting) return 'Connecting...';
-    if (FlutterBluePlus.isScanningNow) return 'Scanning nearby...';
-    return 'Disconnected';
   }
 
-  bool get _isConnected => _connectedDevice != null;
+  bool get _isConnected => _connectionState == BluetoothConnectionState.connected;
 
   @override
   void initState() {
@@ -46,7 +56,7 @@ class _BleDashboardState extends State<BleDashboard> with SingleTickerProviderSt
     _connectionStateSubscription = _bleService.connectionState.listen((state) {
       if (mounted) {
         setState(() {
-          _isConnecting = false;
+          _connectionState = state;
           if (state == BluetoothConnectionState.connected) {
             _connectedDevice = _bleService.connectedDevice;
           } else {
@@ -118,9 +128,7 @@ class _BleDashboardState extends State<BleDashboard> with SingleTickerProviderSt
 
   void _connectToDevice(BluetoothDevice device) {
     _stopScan();
-    setState(() {
-      _isConnecting = true;
-    });
+    // The UI will update automatically via the connection state stream
     _bleService.connectToDevice(device);
   }
 
@@ -131,6 +139,7 @@ class _BleDashboardState extends State<BleDashboard> with SingleTickerProviderSt
   @override
   Widget build(BuildContext context) {
     final isScanning = FlutterBluePlus.isScanningNow;
+    final isConnecting = _connectionState == BluetoothConnectionState.connecting;
 
     return Scaffold(
       extendBodyBehindAppBar: true,
@@ -168,7 +177,7 @@ class _BleDashboardState extends State<BleDashboard> with SingleTickerProviderSt
                     Stack(
                       alignment: Alignment.center,
                       children: [
-                        if (isScanning)
+                        if (isScanning || isConnecting)
                           RotationTransition(
                             turns: _animationController,
                             child: Container(
@@ -201,11 +210,13 @@ class _BleDashboardState extends State<BleDashboard> with SingleTickerProviderSt
                               BoxShadow(color: Colors.black12, blurRadius: 10, spreadRadius: 2)
                             ],
                           ),
-                          child: Icon(
-                            _isConnected ? Icons.bluetooth_connected : Icons.bluetooth,
-                            size: 48,
-                            color: Colors.white,
-                          ),
+                          child: isConnecting
+                              ? const CircularProgressIndicator(color: Colors.white)
+                              : Icon(
+                                  _isConnected ? Icons.bluetooth_connected : Icons.bluetooth,
+                                  size: 48,
+                                  color: Colors.white,
+                                ),
                         ),
                       ],
                     ),
@@ -244,7 +255,7 @@ class _BleDashboardState extends State<BleDashboard> with SingleTickerProviderSt
                 width: double.infinity,
                 height: 56,
                 child: ElevatedButton(
-                  onPressed: isScanning || _isConnected ? null : _startScan,
+                  onPressed: isScanning || _isConnected || isConnecting ? null : _startScan,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF1976D2),
                     foregroundColor: Colors.white,
@@ -252,7 +263,7 @@ class _BleDashboardState extends State<BleDashboard> with SingleTickerProviderSt
                     elevation: 4,
                   ),
                   child: Text(
-                    isScanning ? 'SCANNING...' : 'SCAN FOR DEVICES',
+                    isScanning ? 'SCANNING...' : (isConnecting ? 'CONNECTING...' : 'SCAN FOR DEVICES'),
                     style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 1.0),
                   ),
                 ),
@@ -265,15 +276,32 @@ class _BleDashboardState extends State<BleDashboard> with SingleTickerProviderSt
   }
 
   Widget _buildDeviceList(bool isScanning) {
-    if (_foundDevices.isEmpty) {
+    if (_foundDevices.isEmpty && !isScanning) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(Icons.devices_other, size: 48, color: Colors.grey[300]),
             const SizedBox(height: 16),
+            const Text(
+              'No devices found',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.grey, fontSize: 16),
+            ),
+          ],
+        ),
+      );
+    }
+    
+    if (isScanning && _foundDevices.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 24),
             Text(
-              isScanning ? 'Searching for devices...' : 'No devices found',
+              'Searching for devices...',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey[500], fontSize: 16),
             ),
