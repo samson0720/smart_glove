@@ -1220,7 +1220,7 @@ class _MapScreenState extends State<MapScreen> {
       // Has the 5m signal for this turn been sent? If not, check distance.
       if (i > _lastSent5mTurnIndex) {
         if (distance < 5) {
-          BLEService().sendVibrateCommand(4); // 4 = Imminent Turn Signal
+          BLEService().sendVibrateCommand(turn.type); // 1=Right, 2=Left
           _lastSent5mTurnIndex = i;
           print('[BLE] 📳 Sent IMMINENT (5m) vibration for turn $i: ${turn.instruction}');
           
@@ -1236,7 +1236,7 @@ class _MapScreenState extends State<MapScreen> {
       // Has the 50m signal for this turn been sent? If not, check distance.
       if (i > _lastSent50mTurnIndex) {
         if (distance < 50) {
-          BLEService().sendVibrateCommand(turn.type); // 1=Right, 2=Left
+          BLEService().sendVibrateCommand(4); // 4 = Imminent Turn Signal
           _lastSent50mTurnIndex = i;
           print('[BLE] 📳 Sent APPROACHING (50m) vibration for turn $i: ${turn.instruction}');
           continue; // Done with this turn, check next one
