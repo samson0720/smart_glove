@@ -66,17 +66,51 @@ class PlaceSuggestion {
 }
 
 /// 當導航成功開始時觸發此函式
-  void _onNavigationStarted() {
+  void _onNavigationStarted(List steps) {
     debugPrint("🚀 [Event Trigger] Navigation has started!");
 
     debugPrint("✅🚀✅✅🚀✅✅🚀✅✅🚀✅");
-    DistanceBLEService.sendAuto(1);
+    // DistanceBLEService.sendAuto(1);
     
-    // TODO: 在這裡實作你想要的事件
-    // 例如：
-    // 1. 發送 BLE 訊號給手套 (BLEService().sendCommand(...))
-    // 2. 記錄使用者的行程開始時間
-    // 3. 跳出一個提示 Toast
+String firstTurnDirection = "straight"; // 預設直行
+    String? instruction;
+
+    // 遍歷所有步驟，尋找第一個有明確轉彎指示的步驟
+    for (var step in steps) {
+      // maneuver 是 Google API 提供的標準轉彎指令 (例如: turn-left, turn-right)
+      String? maneuver = step['maneuver']; 
+      
+      if (maneuver != null && maneuver.isNotEmpty) {
+        if (maneuver.contains('left')) {
+          firstTurnDirection = "left";
+          instruction = step['html_instructions'];
+          break; // 找到第一個轉彎就停止
+        } else if (maneuver.contains('right')) {
+          firstTurnDirection = "right";
+          instruction = step['html_instructions'];
+          break; // 找到第一個轉彎就停止
+        }
+      }
+    }
+
+    // --- 觸發對應事件 ---
+    debugPrint("🔍 Detected First Turn: $firstTurnDirection");
+    
+    if (firstTurnDirection == "left") {
+      // TODO: 這裡呼叫左轉的 BLE 指令
+      // BLEService().sendVibrateCommand(2); // 假設 2 是左轉
+      debugPrint("⬅️ 準備發送：左轉訊號");
+      debugPrint("即將左轉"); // 測試用 Toast
+      DistanceBLEService.sendAuto(4);
+    } else if (firstTurnDirection == "right") {
+      // TODO: 這裡呼叫右轉的 BLE 指令
+      // BLEService().sendVibrateCommand(1); // 假設 1 是右轉
+      debugPrint("➡️ 準備發送：右轉訊號");
+      debugPrint("即將右轉"); // 測試用 Toast
+      DistanceBLEService.sendAuto(2);
+    } else {
+      debugPrint("⬆️ 目前沒有急轉彎，保持直行");
+    }
   }
 
 // -----------------------------------------------------------------------------
@@ -484,6 +518,8 @@ class _MapScreenState extends State<MapScreen> {
             _lastSent5mTurnIndex = -1; // Reset
           });
 
+          _onNavigationStarted(leg['steps']);
+
           // Initial camera: Focus on USER's current position (not route start)
           final controller = await _controller.future;
           final initialTarget = _currentPosition != null 
@@ -499,7 +535,7 @@ class _MapScreenState extends State<MapScreen> {
             ),
           ));
 
-          _onNavigationStarted();
+          _onNavigationStarted(leg['steps']);
 
           // Force arrow marker creation immediately
           if (_currentPosition != null) {
