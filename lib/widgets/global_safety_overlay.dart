@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/safety_service.dart';
 
@@ -74,12 +75,29 @@ class _GlobalSafetyOverlayState extends State<GlobalSafetyOverlay> {
   Future<void> _sendSos() async {
     // In a real app, retrieve this from shared_preferences
     final String number = SafetyService().emergencyContact ?? "110"; 
+    String messageBody = 'HELP! Fall detected via SmartGlove App.';
+
+    try {
+      // 1. Get current position
+      final position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 10),
+      );
+      
+      // 2. Create a Google Maps link
+      final String mapsLink = 'https://www.google.com/maps/search/?api=1&query=${position.latitude},${position.longitude}';
+      messageBody += '\nMy last known location is: $mapsLink';
+
+    } catch (e) {
+      messageBody += '\nCould not retrieve GPS location: $e';
+      debugPrint('Error getting location for SOS: $e');
+    }
     
     final Uri smsLaunchUri = Uri(
       scheme: 'sms',
       path: number,
       queryParameters: <String, String>{
-        'body': 'HELP! Fall detected via SmartGlove App. GPS: [My Location]',
+        'body': messageBody,
       },
     );
 
