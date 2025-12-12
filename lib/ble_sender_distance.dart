@@ -12,14 +12,110 @@ const String targetAddress = "EC:62:60:B7:85:B6";
 
 // 傳送訊息(寫入)到 ESP32 時,應使用 ESP32 端的 TX 特性 UUID。
 // 這裡假設您使用的是 Nordic UART Service (NUS) 的 TX UUID。
-const String serviceUuid = "02497b85-8226-4926-9c4a-ab8a69398eda";
-const String writeCharUuid = "02497b86-8226-4926-9c4a-ab8a69398eda";  // WRITE 特性
-const String notifyCharUuid = "02497b87-8226-4926-9c4a-ab8a69398eda"; // NOTIFY 特性 (如果需要接收數據)
+// const String serviceUuid = "02497b85-8226-4926-9c4a-ab8a69398eda";
+// const String writeCharUuid = "02497b86-8226-4926-9c4a-ab8a69398eda";  // WRITE 特性
+// const String notifyCharUuid = "02497b87-8226-4926-9c4a-ab8a69398eda"; // NOTIFY 特性 (如果需要接收數據)
+
+// 常見的 Nordic UART Service (NUS) 設定
+const String serviceUuid = "6E400001-B5A3-F393-E0A9-E50E24DCCA9E";
+
+// 注意：手機的 Write 對應 ESP32 的 RX
+const String writeCharUuid = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"; 
+
+// 注意：手機的 Notify 對應 ESP32 的 TX
+const String notifyCharUuid = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E";
+
 // ==========================================================
 // BLEService 類別 - 處理所有藍牙操作
 // ==========================================================
 
 class DistanceBLEService {
+
+  static Future<void> sendAuto(int commandNumber) async {
+    String messageToSend = commandNumber.toString();
+    print("[AutoBLE] 🤖 準備自動發送指令: $messageToSend");
+
+    try {
+      // 1. 檢查藍牙狀態
+      if (await FlutterBluePlus.adapterState.first != BluetoothAdapterState.on) {
+        print("[AutoBLE] ⚠️ 藍牙未開啟，取消發送");
+        return;
+      }
+
+      // 2. 掃描特定設備 (設定 2 秒超時，求快)
+      BluetoothDevice? targetDevice;
+      print("[AutoBLE] 🔍 掃描中...");
+      
+      // 啟動掃描
+      await FlutterBluePlus.startScan(
+        timeout: const Duration(seconds: 2), // 自動模式時間縮短一點
+        androidUsesFineLocation: true,
+      );
+
+      // 監聽掃描結果
+      var scanSubscription = FlutterBluePlus.scanResults.listen((results) {
+        for (ScanResult r in results) {
+          if (r.device.remoteId.toString().toUpperCase() == targetAddress.toUpperCase()) {
+            targetDevice = r.device;
+            print("[AutoBLE] ✅ 找到設備: ${r.device.remoteId}");
+            FlutterBluePlus.stopScan(); // 找到就馬上停止掃描
+          }
+        }
+      });
+
+      // 等待掃描結束 (或手動停止)
+      await Future.delayed(const Duration(seconds: 2));
+      await scanSubscription.cancel();
+
+      if (targetDevice == null) {
+        print("[AutoBLE] ❌ 掃描超時，找不到設備 $targetAddress");
+        return;
+      }
+
+      // 3. 連接
+      print("[AutoBLE] 🔗 連接中...");
+      await targetDevice!.connect(timeout: const Duration(seconds: 5));
+
+      // 4. 發現服務與寫入
+      print("[AutoBLE] 📂 尋找服務...");
+      List<BluetoothService> services = await targetDevice!.discoverServices();
+      
+      BluetoothCharacteristic? writeCharacteristic;
+
+      // 簡化的尋找邏輯 (直接找 UUID)
+      for (var service in services) {
+        if (service.uuid.toString().toLowerCase().contains(serviceUuid.toLowerCase().substring(4, 8))) {
+           for (var char in service.characteristics) {
+             if (char.uuid.toString().toLowerCase().contains(writeCharUuid.toLowerCase().substring(4, 8))) {
+               writeCharacteristic = char;
+               break;
+             }
+           }
+        }
+      }
+
+      if (writeCharacteristic != null) {
+        List<int> dataBytes = utf8.encode(messageToSend);
+        
+        // 寫入數據
+        await writeCharacteristic.write(
+          dataBytes,
+          withoutResponse: writeCharacteristic.properties.writeWithoutResponse,
+        );
+        print("[AutoBLE] 📤 ✅ 成功發送指令: $messageToSend");
+      } else {
+        print("[AutoBLE] ❌ 找不到寫入特徵值");
+      }
+
+      // 5. 斷開連接 (自動模式通常發完就斷，省電)
+      await targetDevice!.disconnect();
+      print("[AutoBLE] 🔌 已斷線");
+
+    } catch (e) {
+      print("[AutoBLE] ❌ 發生錯誤: $e");
+    }
+  }
+
   static Future<String> sendBluetoothdistance(String messageToSend) async {
     StringBuffer log = StringBuffer();
     

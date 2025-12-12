@@ -65,6 +65,20 @@ class PlaceSuggestion {
   }
 }
 
+/// 當導航成功開始時觸發此函式
+  void _onNavigationStarted() {
+    debugPrint("🚀 [Event Trigger] Navigation has started!");
+
+    debugPrint("✅🚀✅✅🚀✅✅🚀✅✅🚀✅");
+    DistanceBLEService.sendAuto(1);
+    
+    // TODO: 在這裡實作你想要的事件
+    // 例如：
+    // 1. 發送 BLE 訊號給手套 (BLEService().sendCommand(...))
+    // 2. 記錄使用者的行程開始時間
+    // 3. 跳出一個提示 Toast
+  }
+
 // -----------------------------------------------------------------------------
 // MAIN APP
 // -----------------------------------------------------------------------------
@@ -484,6 +498,8 @@ class _MapScreenState extends State<MapScreen> {
               bearing: _deviceHeading ?? _currentPosition?.heading ?? 0.0, // Start with correct heading
             ),
           ));
+
+          _onNavigationStarted();
 
           // Force arrow marker creation immediately
           if (_currentPosition != null) {
