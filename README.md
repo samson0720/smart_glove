@@ -76,16 +76,21 @@ cd smart-glove-main
 flutter pub get
 ```
 
-### 3. 配置 API 金鑰
-在專案根目錄建立 `.env` 檔案：
-```
-GOOGLE_MAPS_API_KEY="YOUR_API_KEY_HERE"
-```
+### 3. 配置 API 金鑰（可選）
+**注意**：專案中已包含 Google Maps API Key，可以直接使用。如果遇到 API 限制或想使用自己的金鑰，請：
+
+1. 在 `lib/main.dart` 第 27 行修改 `GOOGLE_MAPS_API_KEY` 常數
+2. 在 `android/app/src/main/AndroidManifest.xml` 第 40 行修改 `com.google.android.geo.API_KEY` 的值
 
 ### 4. 執行 App
 ```bash
 flutter run
 ```
+
+**⚠️ 重要提示**：如果 Google Maps API Key 達到使用限制，您需要：
+- 前往 [Google Cloud Console](https://console.cloud.google.com/) 建立自己的 API Key
+- 啟用以下服務：Maps SDK for Android、Directions API、Places API
+- 更新上述兩個檔案中的 API Key
 
 ---
 
