@@ -160,7 +160,8 @@ class _MapScreenState extends State<MapScreen> {
 
   // BLE Vibration Control
   List<TurnPoint> _turnPoints = []; // Parsed turn points from route
-  int _lastSentTurnIndex = -1; // Prevent duplicate commands
+  int _lastSent50mTurnIndex = -1; // Prevent duplicate 50m commands
+  int _lastSent5mTurnIndex = -1; // Prevent duplicate 5m commands
 
 
   // Custom Marker
@@ -462,7 +463,8 @@ class _MapScreenState extends State<MapScreen> {
 
             // Parse turn points for BLE vibration
             _parseTurnPoints(leg['steps']);
-            _lastSentTurnIndex = -1; // Reset
+            _lastSent50mTurnIndex = -1; // Reset
+            _lastSent5mTurnIndex = -1; // Reset
           });
 
           // Initial camera: Focus on USER's current position (not route start)
@@ -1208,19 +1210,37 @@ class _MapScreenState extends State<MapScreen> {
     LatLng currentPos = LatLng(position.latitude, position.longitude);
 
     for (int i = 0; i < _turnPoints.length; i++) {
-      if (i <= _lastSentTurnIndex) continue; // Skip already sent
-
       TurnPoint turn = _turnPoints[i];
       double distance = SafetyService().calculateDistance(
         currentPos.latitude, currentPos.longitude,
         turn.position.latitude, turn.position.longitude,
       );
 
-      if (distance < 50) { // Within 50m
-        BLEService().sendVibrateCommand(turn.type);
-        _lastSentTurnIndex = i;
-        print('[BLE] 📳 Sent vibration for turn $i: ${turn.instruction} (${distance.toStringAsFixed(0)}m)');
-        break; // Only send one at a time
+      // --- 5 Meter Check (Imminent Turn) ---
+      // Has the 5m signal for this turn been sent? If not, check distance.
+      if (i > _lastSent5mTurnIndex) {
+        if (distance < 5) {
+          BLEService().sendVibrateCommand(4); // 4 = Imminent Turn Signal
+          _lastSent5mTurnIndex = i;
+          print('[BLE] 📳 Sent IMMINENT (5m) vibration for turn $i: ${turn.instruction}');
+          
+          // Also mark 50m as sent to prevent it from sending after the 5m one.
+          if (i > _lastSent50mTurnIndex) {
+            _lastSent50mTurnIndex = i;
+          }
+          continue; // Done with this turn, check next one
+        }
+      }
+
+      // --- 50 Meter Check (Approaching Turn) ---
+      // Has the 50m signal for this turn been sent? If not, check distance.
+      if (i > _lastSent50mTurnIndex) {
+        if (distance < 50) {
+          BLEService().sendVibrateCommand(turn.type); // 1=Right, 2=Left
+          _lastSent50mTurnIndex = i;
+          print('[BLE] 📳 Sent APPROACHING (50m) vibration for turn $i: ${turn.instruction}');
+          continue; // Done with this turn, check next one
+        }
       }
     }
   }

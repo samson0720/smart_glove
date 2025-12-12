@@ -67,7 +67,7 @@ class BLEService {
   }
 
   /// Send vibration command
-  /// type: 1=右轉, 2=左轉, 3=直行, 0=停止
+  /// type: 1=右轉, 2=左轉, 3=直行, 0=停止, 4=即將轉彎
   Future<void> sendVibrateCommand(int type) async {
     if (_vibrateCharacteristic == null) {
       print('[BLE] ⚠️ Not connected, cannot send command');
@@ -77,7 +77,7 @@ class BLEService {
     try {
       await _vibrateCharacteristic!.write([type], withoutResponse: true);
       
-      String commandName = ['停止', '右轉', '左轉', '直行'][type];
+      String commandName = ['停止', '右轉', '左轉', '直行', '即將轉彎'][type];
       print('[BLE] 📳 Sent command: $commandName ($type)');
     } catch (e) {
       print('[BLE] Send error: $e');
