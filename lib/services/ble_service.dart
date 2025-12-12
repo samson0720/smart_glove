@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 
 /// BLE Service for SmartGlove vibration control
@@ -13,56 +14,89 @@ class BLEService {
 
   BluetoothDevice? _connectedDevice;
   BluetoothCharacteristic? _vibrateCharacteristic;
-  StreamSubscription? _scanSubscription;
+  StreamSubscription<BluetoothConnectionState>? _connectionStateSubscription;
 
-  bool get isConnected => _connectedDevice != null && _vibrateCharacteristic != null;
+  // Stream to notify UI about connection state changes
+  final _connectionStateController = StreamController<BluetoothConnectionState>.broadcast();
+  Stream<BluetoothConnectionState> get connectionState => _connectionStateController.stream;
 
-  /// Start scanning for SmartGlove device
-  Future<void> startScan() async {
-    print('[BLE] Starting scan...');
-    
-    // Cancel existing scan
-    await FlutterBluePlus.stopScan();
-    
-    _scanSubscription = FlutterBluePlus.scanResults.listen((results) {
-      for (ScanResult r in results) {
-        if (r.device.platformName.contains('SmartGlove')) {
-          print('[BLE] Found SmartGlove: ${r.device.platformName}');
-          _connectToDevice(r.device);
-          FlutterBluePlus.stopScan();
-          break;
-        }
-      }
-    });
+  BluetoothDevice? get connectedDevice => _connectedDevice;
+  bool get isConnected => _connectedDevice != null;
 
-    await FlutterBluePlus.startScan(timeout: const Duration(seconds: 10));
+  /// Start scanning for BLE devices
+  Stream<List<ScanResult>> startScan({int timeoutSeconds = 10}) {
+    debugPrint('[BLE] Starting scan...');
+    FlutterBluePlus.startScan(timeout: Duration(seconds: timeoutSeconds));
+    return FlutterBluePlus.scanResults;
   }
 
-  /// Connect to the glove device
-  Future<void> _connectToDevice(BluetoothDevice device) async {
-    try {
-      print('[BLE] Connecting to ${device.platformName}...');
-      await device.connect(timeout: const Duration(seconds: 10));
-      _connectedDevice = device;
+  /// Stop scanning
+  void stopScan() {
+    debugPrint('[BLE] Stopping scan...');
+    FlutterBluePlus.stopScan();
+  }
 
-      // Discover services
-      List<BluetoothService> services = await device.discoverServices();
+  /// Connect to a device
+  Future<void> connectToDevice(BluetoothDevice device) async {
+    if (_connectedDevice != null) {
+      debugPrint('[BLE] Already connected to a device. Disconnecting first.');
+      await disconnect();
+    }
+
+    debugPrint('[BLE] Connecting to ${device.platformName}...');
+    _connectionStateController.add(BluetoothConnectionState.connecting);
+
+    try {
+      // Cancel any previous connection subscription
+      await _connectionStateSubscription?.cancel();
       
+      // Listen to the connection state
+      _connectionStateSubscription = device.connectionState.listen((state) async {
+        _connectionStateController.add(state);
+        if (state == BluetoothConnectionState.connected) {
+          _connectedDevice = device;
+          debugPrint('[BLE] ✅ Connected to ${device.platformName}');
+          await _discoverServices();
+        } else if (state == BluetoothConnectionState.disconnected) {
+          debugPrint('[BLE] Disconnected from ${device.platformName}');
+          _connectedDevice = null;
+          _vibrateCharacteristic = null;
+        }
+      });
+
+      await device.connect(timeout: const Duration(seconds: 15));
+
+    } catch (e) {
+      debugPrint('[BLE] Connection error: $e');
+      _connectionStateController.add(BluetoothConnectionState.disconnected);
+      disconnect(); // Clean up
+    }
+  }
+
+  /// Discover services and characteristics for the connected device
+  Future<void> _discoverServices() async {
+    if (_connectedDevice == null) {
+      debugPrint('[BLE] ⚠️ Cannot discover services, no device connected.');
+      return;
+    }
+
+    debugPrint('[BLE] Discovering services...');
+    try {
+      List<BluetoothService> services = await _connectedDevice!.discoverServices();
       for (BluetoothService service in services) {
         if (service.uuid.toString().toLowerCase() == SERVICE_UUID.toLowerCase()) {
           for (BluetoothCharacteristic characteristic in service.characteristics) {
             if (characteristic.uuid.toString().toLowerCase() == CHARACTERISTIC_UUID.toLowerCase()) {
               _vibrateCharacteristic = characteristic;
-              print('[BLE] ✅ Connected and ready!');
+              debugPrint('[BLE] ✅ Found vibrate characteristic!');
               return;
             }
           }
         }
       }
-
-      print('[BLE] ⚠️ Service/Characteristic not found');
+      debugPrint('[BLE] ⚠️ Vibrate characteristic not found');
     } catch (e) {
-      print('[BLE] Connection error: $e');
+      debugPrint('[BLE] Service discovery error: $e');
     }
   }
 
@@ -70,31 +104,39 @@ class BLEService {
   /// type: 1=右轉, 2=左轉, 3=直行, 0=停止, 4=即將轉彎
   Future<void> sendVibrateCommand(int type) async {
     if (_vibrateCharacteristic == null) {
-      print('[BLE] ⚠️ Not connected, cannot send command');
+      debugPrint('[BLE] ⚠️ Not connected or characteristic not found, cannot send command');
       return;
     }
 
     try {
       await _vibrateCharacteristic!.write([type], withoutResponse: true);
       
-      String commandName = ['停止', '右轉', '左轉', '直行', '即將轉彎'][type];
-      print('[BLE] 📳 Sent command: $commandName ($type)');
+      String commandName = 'Unknown';
+      const commands = {0: '停止', 1: '右轉', 2: '左轉', 3: '直行', 4: '即將轉彎'};
+      commandName = commands[type] ?? 'Unknown';
+
+      debugPrint('[BLE] 📳 Sent command: $commandName ($type)');
     } catch (e) {
-      print('[BLE] Send error: $e');
+      debugPrint('[BLE] Send error: $e');
     }
   }
 
-  /// Disconnect from device
+  /// Disconnect from the current device
   Future<void> disconnect() async {
+    await _connectionStateSubscription?.cancel();
+    _connectionStateSubscription = null;
     await _connectedDevice?.disconnect();
     _connectedDevice = null;
     _vibrateCharacteristic = null;
-    print('[BLE] Disconnected');
+    _connectionStateController.add(BluetoothConnectionState.disconnected);
+    debugPrint('[BLE] Disconnected');
   }
 
-  /// Cleanup
+  /// Cleanup resources
   void dispose() {
-    _scanSubscription?.cancel();
+    stopScan();
     disconnect();
+    _connectionStateController.close();
+    debugPrint('[BLE] Service disposed');
   }
 }

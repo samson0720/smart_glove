@@ -1,5 +1,10 @@
 import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+import 'package:permission_handler/permission_handler.dart';
+import '../services/ble_service.dart';
 
 class BleDashboard extends StatefulWidget {
   const BleDashboard({super.key});
@@ -10,12 +15,24 @@ class BleDashboard extends StatefulWidget {
 
 class _BleDashboardState extends State<BleDashboard> with SingleTickerProviderStateMixin {
   late AnimationController _animationController;
-  bool _isScanning = false;
-  bool _isConnected = false;
-  String _connectionStatus = 'Disconnected';
-  
-  // Mock Devices
-  final List<Map<String, dynamic>> _foundDevices = [];
+  final BLEService _bleService = BLEService();
+  StreamSubscription<List<ScanResult>>? _scanSubscription;
+  StreamSubscription<BluetoothConnectionState>? _connectionStateSubscription;
+
+  List<ScanResult> _foundDevices = [];
+  BluetoothDevice? _connectedDevice;
+  bool _isConnecting = false;
+
+  String get _connectionStatus {
+    if (_connectedDevice != null) {
+      return 'Connected to ${_connectedDevice!.platformName.isNotEmpty ? _connectedDevice!.platformName : _connectedDevice!.remoteId}';
+    }
+    if (_isConnecting) return 'Connecting...';
+    if (FlutterBluePlus.isScanningNow) return 'Scanning nearby...';
+    return 'Disconnected';
+  }
+
+  bool get _isConnected => _connectedDevice != null;
 
   @override
   void initState() {
@@ -24,77 +41,99 @@ class _BleDashboardState extends State<BleDashboard> with SingleTickerProviderSt
       vsync: this,
       duration: const Duration(seconds: 3),
     );
+
+    // Listen to connection state changes
+    _connectionStateSubscription = _bleService.connectionState.listen((state) {
+      if (mounted) {
+        setState(() {
+          _isConnecting = false;
+          if (state == BluetoothConnectionState.connected) {
+            _connectedDevice = _bleService.connectedDevice;
+          } else {
+            _connectedDevice = null;
+          }
+        });
+      }
+    });
   }
 
   @override
   void dispose() {
     _animationController.dispose();
+    _scanSubscription?.cancel();
+    _connectionStateSubscription?.cancel();
+    _bleService.dispose();
     super.dispose();
   }
 
-  void _startScan() {
+  Future<void> _requestPermissions() async {
+    if (Platform.isAndroid) {
+      await [
+        Permission.bluetoothScan,
+        Permission.bluetoothConnect,
+        Permission.location,
+      ].request();
+    }
+    // iOS permissions are handled by the flutter_blue_plus package automatically
+  }
+
+  void _startScan() async {
+    await _requestPermissions();
+
+    if (await Permission.bluetoothScan.isDenied) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Bluetooth scan permission is required to find devices.')),
+        );
+      }
+      return;
+    }
+
     setState(() {
-      _isScanning = true;
       _foundDevices.clear();
-      _connectionStatus = 'Scanning nearby...';
     });
     _animationController.repeat();
 
-    // Mock scanning process
-    Future.delayed(const Duration(seconds: 2), () {
+    _scanSubscription = _bleService.startScan().listen((results) {
       if (mounted) {
         setState(() {
-          _foundDevices.add({
-            'name': 'Smart Glove Left',
-            'rssi': -65,
-            'id': 'AA:BB:CC:11:22:33',
-          });
+          // Filter out devices with no name and sort by RSSI
+          _foundDevices = results.where((r) => r.device.platformName.isNotEmpty).toList();
+          _foundDevices.sort((a, b) => b.rssi.compareTo(a.rssi));
         });
       }
-    });
+    }, onDone: _stopScan);
 
-    Future.delayed(const Duration(seconds: 5), () {
-      if (mounted) {
-        _stopScan();
-      }
-    });
+    // Stop scan after 10 seconds
+    Future.delayed(const Duration(seconds: 10), _stopScan);
   }
 
   void _stopScan() {
-    setState(() {
-      _isScanning = false;
-      _connectionStatus = _isConnected ? 'Connected' : 'Scan Complete';
-    });
-    _animationController.stop();
+    _bleService.stopScan();
+    if (mounted) {
+      _animationController.stop();
+      setState(() {}); // Update status text
+    }
   }
 
-  void _connectToDevice(Map<String, dynamic> device) {
+  void _connectToDevice(BluetoothDevice device) {
+    _stopScan();
     setState(() {
-      _connectionStatus = 'Connecting...';
+      _isConnecting = true;
     });
-
-    // Mock connection delay
-    Future.delayed(const Duration(seconds: 2), () {
-      if (mounted) {
-        setState(() {
-          _isConnected = true;
-          _connectionStatus = 'Connected to ${device['name']}';
-        });
-      }
-    });
+    _bleService.connectToDevice(device);
   }
 
   void _disconnect() {
-    setState(() {
-      _isConnected = false;
-      _connectionStatus = 'Disconnected';
-    });
+    _bleService.disconnect();
   }
 
   @override
   Widget build(BuildContext context) {
+    final isScanning = FlutterBluePlus.isScanningNow;
+
     return Scaffold(
-      extendBodyBehindAppBar: true, // For gradient full screen effect if needed
+      extendBodyBehindAppBar: true,
       appBar: AppBar(
         title: const Text('Device Connection'),
         backgroundColor: Colors.transparent,
@@ -107,13 +146,13 @@ class _BleDashboardState extends State<BleDashboard> with SingleTickerProviderSt
         ),
         child: Column(
           children: [
-            // 1. Radar / Status Section (Gradient Background)
+            // 1. Radar / Status Section
             Container(
-              height: 360, // Increased from 320 to prevent overflow
+              height: 360,
               width: double.infinity,
               decoration: const BoxDecoration(
                 gradient: LinearGradient(
-                  colors: [Color(0xFF1565C0), Color(0xFF42A5F5)], // Tech Blue Gradient
+                  colors: [Color(0xFF1565C0), Color(0xFF42A5F5)],
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                 ),
@@ -129,13 +168,12 @@ class _BleDashboardState extends State<BleDashboard> with SingleTickerProviderSt
                     Stack(
                       alignment: Alignment.center,
                       children: [
-                        // Radar Rings
-                        if (_isScanning)
+                        if (isScanning)
                           RotationTransition(
                             turns: _animationController,
                             child: Container(
-                              width: 160, // Reduced from 200
-                              height: 160, // Reduced from 200
+                              width: 160,
+                              height: 160,
                               decoration: BoxDecoration(
                                 shape: BoxShape.circle,
                                 gradient: RadialGradient(
@@ -145,23 +183,21 @@ class _BleDashboardState extends State<BleDashboard> with SingleTickerProviderSt
                               ),
                             ),
                           ),
-                        // Static Ring
                         Container(
-                          width: 110, // Reduced from 140
-                          height: 110, // Reduced from 140
+                          width: 110,
+                          height: 110,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             border: Border.all(color: Colors.white.withOpacity(0.3), width: 1),
                           ),
                         ),
-                        // Central Icon
                         Container(
-                          width: 80, // Reduced from 100
-                          height: 80, // Reduced from 100
+                          width: 80,
+                          height: 80,
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
                             color: Colors.white.withOpacity(0.15),
-                            boxShadow: [
+                            boxShadow: const [
                               BoxShadow(color: Colors.black12, blurRadius: 10, spreadRadius: 2)
                             ],
                           ),
@@ -177,8 +213,8 @@ class _BleDashboardState extends State<BleDashboard> with SingleTickerProviderSt
                     Text(
                       _connectionStatus,
                       style: const TextStyle(
-                        color: Colors.white, 
-                        fontSize: 20, 
+                        color: Colors.white,
+                        fontSize: 20,
                         fontWeight: FontWeight.w600,
                         letterSpacing: 0.5,
                       ),
@@ -190,9 +226,9 @@ class _BleDashboardState extends State<BleDashboard> with SingleTickerProviderSt
 
             // 2. Device List / Dashboard
             Expanded(
-              child: _isConnected 
-              ? _buildConnectedDashboard()
-              : _buildDeviceList(),
+              child: _isConnected
+                  ? _buildConnectedDashboard()
+                  : _buildDeviceList(isScanning),
             ),
 
             // 3. Scan Button Area
@@ -208,7 +244,7 @@ class _BleDashboardState extends State<BleDashboard> with SingleTickerProviderSt
                 width: double.infinity,
                 height: 56,
                 child: ElevatedButton(
-                  onPressed: _isScanning || _isConnected ? null : _startScan,
+                  onPressed: isScanning || _isConnected ? null : _startScan,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF1976D2),
                     foregroundColor: Colors.white,
@@ -216,7 +252,7 @@ class _BleDashboardState extends State<BleDashboard> with SingleTickerProviderSt
                     elevation: 4,
                   ),
                   child: Text(
-                    _isScanning ? 'SCANNING...' : 'SCAN FOR DEVICES',
+                    isScanning ? 'SCANNING...' : 'SCAN FOR DEVICES',
                     style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 1.0),
                   ),
                 ),
@@ -228,7 +264,7 @@ class _BleDashboardState extends State<BleDashboard> with SingleTickerProviderSt
     );
   }
 
-  Widget _buildDeviceList() {
+  Widget _buildDeviceList(bool isScanning) {
     if (_foundDevices.isEmpty) {
       return Center(
         child: Column(
@@ -237,7 +273,7 @@ class _BleDashboardState extends State<BleDashboard> with SingleTickerProviderSt
             Icon(Icons.devices_other, size: 48, color: Colors.grey[300]),
             const SizedBox(height: 16),
             Text(
-              _isScanning ? 'Searching frequency...' : 'No devices found',
+              isScanning ? 'Searching for devices...' : 'No devices found',
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey[500], fontSize: 16),
             ),
@@ -250,7 +286,7 @@ class _BleDashboardState extends State<BleDashboard> with SingleTickerProviderSt
       padding: const EdgeInsets.symmetric(vertical: 16),
       itemCount: _foundDevices.length,
       itemBuilder: (context, index) {
-        final device = _foundDevices[index];
+        final result = _foundDevices[index];
         return Container(
           margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
           decoration: BoxDecoration(
@@ -271,19 +307,19 @@ class _BleDashboardState extends State<BleDashboard> with SingleTickerProviderSt
               child: const Icon(Icons.watch_outlined, color: Colors.blue),
             ),
             title: Text(
-              device['name'],
+              result.device.platformName,
               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
-            subtitle: Text('ID: ${device['id']}', style: const TextStyle(fontSize: 12)),
+            subtitle: Text('ID: ${result.device.remoteId}', style: const TextStyle(fontSize: 12)),
             trailing: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 const Icon(Icons.signal_cellular_alt, color: Colors.green, size: 20),
-                Text('${device['rssi']} dBm', style: TextStyle(fontSize: 10, color: Colors.grey[600])),
+                Text('${result.rssi} dBm', style: TextStyle(fontSize: 10, color: Colors.grey[600])),
               ],
             ),
-            onTap: () => _connectToDevice(device),
+            onTap: () => _connectToDevice(result.device),
           ),
         );
       },
@@ -291,14 +327,22 @@ class _BleDashboardState extends State<BleDashboard> with SingleTickerProviderSt
   }
 
   Widget _buildConnectedDashboard() {
+    // Example: Send a command when a button is pressed
+    void sendTestCommand() {
+      _bleService.sendVibrateCommand(4); // "Approaching turn"
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sent "Approaching turn" command!')),
+      );
+    }
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24.0),
       child: Column(
         children: [
-          _buildInfoCard(Icons.battery_charging_full, 'Battery Level', '85%', Colors.green),
+          _buildInfoCard(Icons.bluetooth_audio, 'Signal Strength', 'Good', Colors.blue),
           const SizedBox(height: 16),
-          _buildInfoCard(Icons.bluetooth_audio, 'Signal Strength', '-65 dBm', Colors.blue),
-          const SizedBox(height: 40), // Replaced Spacer with fixed space to allow scrolling
+          _buildInfoCard(Icons.vibration, 'Test Vibration', 'Send Command', Colors.purple, onTap: sendTestCommand),
+          const SizedBox(height: 40),
           OutlinedButton.icon(
             onPressed: _disconnect,
             icon: const Icon(Icons.bluetooth_disabled),
@@ -315,36 +359,44 @@ class _BleDashboardState extends State<BleDashboard> with SingleTickerProviderSt
     );
   }
 
-  Widget _buildInfoCard(IconData icon, String title, String value, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4)),
-        ],
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(16),
+  Widget _buildInfoCard(IconData icon, String title, String value, Color color, {VoidCallback? onTap}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4)),
+          ],
+        ),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Icon(icon, color: color, size: 32),
             ),
-            child: Icon(icon, color: color, size: 32),
-          ),
-          const SizedBox(width: 20),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: TextStyle(color: Colors.grey[500], fontSize: 14)),
-              const SizedBox(height: 4),
-              Text(value, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-            ],
-          ),
-        ],
+            const SizedBox(width: 20),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: TextStyle(color: Colors.grey[500], fontSize: 14)),
+                const SizedBox(height: 4),
+                Text(value, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+              ],
+            ),
+            if (onTap != null) ...[
+              const Spacer(),
+              const Icon(Icons.touch_app, color: Colors.grey),
+            ]
+          ],
+        ),
       ),
     );
   }
