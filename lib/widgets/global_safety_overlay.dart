@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../services/safety_service.dart';
 
@@ -18,17 +19,14 @@ class _GlobalSafetyOverlayState extends State<GlobalSafetyOverlay> {
   StreamSubscription? _fallSubscription;
   
   bool _isSosActive = false;
-  int _countdown = 30;
+  int _countdown = 3;
+  int _initialCountdown = 3; // Default value
   Timer? _countdownTimer;
 
-  // Ideally this should be persisted in SharedPreferences
-  // For now we default it or rely on what was typed in settings page (if we used state management)
-  // Since we don't have complex state management, we'll assume a default or need a way to share data.
-  // For this prototype, we'll hardcode or use a static variable in SafetyService for the contact.
-  
   @override
   void initState() {
     super.initState();
+    _loadCountdown();
     _fallSubscription = _safetyService.onFallDetected.listen((_) {
       _triggerSosSequence();
     });
@@ -41,23 +39,37 @@ class _GlobalSafetyOverlayState extends State<GlobalSafetyOverlay> {
     super.dispose();
   }
 
+  Future<void> _loadCountdown() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      _initialCountdown = prefs.getInt('sos_countdown') ?? 3;
+      _countdown = _initialCountdown;
+    });
+  }
+
   void _triggerSosSequence() {
     if (_isSosActive) return;
 
-    setState(() {
-      _isSosActive = true;
-      _countdown = 30; 
-    });
-
-    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+    // Reload the countdown from prefs every time a sequence is triggered
+    // to ensure we have the latest setting.
+    _loadCountdown().then((_) {
       if (!mounted) return;
       setState(() {
-        if (_countdown > 0) {
-          _countdown--;
-        } else {
-          _sendSos();
-          _cancelSos();
-        }
+        _isSosActive = true;
+        // _countdown is already set by _loadCountdown
+      });
+
+      _countdownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+        if (!mounted) return;
+        setState(() {
+          if (_countdown > 0) {
+            _countdown--;
+          } else {
+            _sendSos();
+            _cancelSos();
+          }
+        });
       });
     });
   }
@@ -67,7 +79,7 @@ class _GlobalSafetyOverlayState extends State<GlobalSafetyOverlay> {
     if (mounted) {
       setState(() {
         _isSosActive = false;
-        _countdown = 30;
+        _countdown = _initialCountdown;
       });
     }
   }

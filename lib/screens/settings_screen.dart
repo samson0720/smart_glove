@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter/services.dart';
 
 class SettingsScreen extends StatefulWidget {
   final MapType currentMapType;
@@ -25,11 +27,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _voiceGuidance = true;
   bool _notifications = true;
 
+  final TextEditingController _countdownController = TextEditingController();
+
   @override
   void initState() {
     super.initState();
     _selectedMapType = widget.currentMapType;
     _isNightMode = widget.isNightMode;
+    _loadSettings();
+  }
+
+  @override
+  void dispose() {
+    _countdownController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    final int countdown = prefs.getInt('sos_countdown') ?? 3; // Default to 3 seconds
+    _countdownController.text = countdown.toString();
+  }
+
+  Future<void> _saveSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    final int? countdown = int.tryParse(_countdownController.text);
+    if (countdown != null && countdown > 0) {
+      await prefs.setInt('sos_countdown', countdown);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Settings saved!')),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a valid number.')),
+      );
+    }
   }
 
   @override
@@ -149,9 +181,59 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
 
+            const SizedBox(height: 32),
+
+            // 4. Safety Settings
+            _buildSectionHeader('Safety'),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4)),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    'SOS Countdown Timer',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Time in seconds before an SOS is sent after a fall.',
+                    style: TextStyle(color: Colors.grey, fontSize: 13),
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _countdownController,
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                          decoration: const InputDecoration(
+                            labelText: 'Seconds',
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      ElevatedButton(
+                        onPressed: _saveSettings,
+                        child: const Text('Save'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+
             const SizedBox(height: 48),
             
-            // 4. About
+            // 5. About
             Center(
               child: Column(
                 children: [
