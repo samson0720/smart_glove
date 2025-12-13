@@ -21,6 +21,7 @@ import 'utils/map_style.dart'; // Added Night Mode style
 
 
 import 'ble_sender_distance.dart';
+import 'ble_sender_screen.dart';
 
 // -----------------------------------------------------------------------------
 // CONFIGURATION
@@ -700,6 +701,17 @@ class _MapScreenState extends State<MapScreen> {
               Navigator.push(
                 context,
                 MaterialPageRoute(builder: (context) => const SafetyScreen()),
+              );
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.send_to_mobile), // 換個圖示區隔
+            title: const Text('ESP32 訊息發送測試'), // 新功能的按鈕
+            onTap: () {
+              Navigator.pop(context); // 關閉側邊欄
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const BluetoothSenderScreen()),
               );
             },
           ),

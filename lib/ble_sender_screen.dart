@@ -1,0 +1,353 @@
+import 'dart:async';
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:flutter_blue_plus/flutter_blue_plus.dart';
+
+// ==========================================================
+// ⚠️ 修正與設定參數 ⚠️
+// ==========================================================
+
+// 目標 ESP32 設備的地址
+const String targetAddress = "EC:62:60:B7:85:B6";
+
+// 傳送訊息(寫入)到 ESP32 時,應使用 ESP32 端的 TX 特性 UUID。
+// 這裡假設您使用的是 Nordic UART Service (NUS) 的 TX UUID。
+
+
+
+// const String serviceUuid = "02497b85-8226-4926-9c4a-ab8a69398eda";
+// const String writeCharUuid = "02497b86-8226-4926-9c4a-ab8a69398eda";  // WRITE 特性
+// const String notifyCharUuid = "02497b87-8226-4926-9c4a-ab8a69398eda"; // NOTIFY 特性 (如果需要接收數據)
+
+// const String serviceUuid = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+// const String writeCharUuid = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";  // WRITE 特性
+// const String notifyCharUuid = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"; // NOTIFY 特性 (如果需要接收數據)
+
+// 常見的 Nordic UART Service (NUS) 設定
+const String serviceUuid = "6E400001-B5A3-F393-E0A9-E50E24DCCA9E";
+
+// 注意：手機的 Write 對應 ESP32 的 RX
+const String writeCharUuid = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"; 
+
+// 注意：手機的 Notify 對應 ESP32 的 TX
+const String notifyCharUuid = "6E400003-B5A3-F393-E0A9-E50E24DCCA9E";
+
+
+
+
+// ==========================================================
+// BLEService 類別 - 處理所有藍牙操作
+// ==========================================================
+
+class SenderBLEService {
+  static Future<String> sendBluetoothMessage(String messageToSend) async {
+    StringBuffer log = StringBuffer();
+    
+    // 輔助函數：同時輸出到日誌和 terminal
+    void logMessage(String message) {
+      log.writeln(message);
+      print(message);  // 輸出到 terminal
+    }
+    
+    try {
+      logMessage("1. 正在檢查藍牙狀態...");
+      
+      // 檢查藍牙是否開啟
+      if (await FlutterBluePlus.isSupported == false) {
+        logMessage("❌ 此設備不支援藍牙");
+        return log.toString();
+      }
+
+      // 等待藍牙開啟
+      var subscription = FlutterBluePlus.adapterState.listen((state) {
+        logMessage("藍牙狀態: $state");
+      });
+
+      // 檢查當前藍牙狀態
+      if (await FlutterBluePlus.adapterState.first != BluetoothAdapterState.on) {
+        logMessage("⚠️ 請開啟藍牙");
+        // 在 Android 上可以嘗試開啟藍牙
+        if (await FlutterBluePlus.isSupported) {
+          await FlutterBluePlus.turnOn();
+        }
+        await subscription.cancel();
+        return log.toString();
+      }
+
+      logMessage("2. 正在掃描藍牙設備...");
+      
+      BluetoothDevice? targetDevice;
+      
+      // 設定掃描監聽器
+      var scanSubscription = FlutterBluePlus.scanResults.listen((results) {
+        for (ScanResult r in results) {
+          // 比對地址(不區分大小寫)
+          if (r.device.remoteId.toString().toUpperCase() == 
+              targetAddress.toUpperCase()) {
+            targetDevice = r.device;
+            logMessage("✅ 找到設備: ${r.device.platformName} (${r.device.remoteId})");
+          }
+        }
+      });
+
+      // 開始掃描(掃描 5 秒)
+      await FlutterBluePlus.startScan(
+        timeout: const Duration(seconds: 5),
+        androidUsesFineLocation: true,
+      );
+
+      // 等待掃描完成
+      await FlutterBluePlus.isScanning.where((val) => val == false).first;
+      
+      await scanSubscription.cancel();
+
+      if (targetDevice == null) {
+        logMessage("❌ 找不到地址為 $targetAddress 的設備。請確認設備已開啟且在廣播。");
+        await subscription.cancel();
+        return log.toString();
+      }
+
+      logMessage("3. 正在連接到設備...");
+      
+      // 連接到設備
+      await targetDevice!.connect(
+        timeout: const Duration(seconds: 15),
+        autoConnect: false,
+      );
+
+      logMessage("✅ 成功連接到設備");
+
+      // 監聽連接狀態
+      targetDevice!.connectionState.listen((state) {
+        logMessage("連接狀態: $state");
+      });
+
+      // 發現服務
+      logMessage("4. 正在發現服務...");
+      List<BluetoothService> services = await targetDevice!.discoverServices();
+
+      // 列出所有服務和特性 (用於除錯)
+      logMessage("\n=== 設備上所有可用的服務和特性 ===");
+      for (var service in services) {
+        logMessage("服務 UUID: ${service.uuid}");
+        for (var char in service.characteristics) {
+          List<String> properties = [];
+          if (char.properties.read) properties.add("READ");
+          if (char.properties.write) properties.add("WRITE");
+          if (char.properties.writeWithoutResponse) properties.add("WRITE_NO_RESPONSE");
+          if (char.properties.notify) properties.add("NOTIFY");
+          if (char.properties.indicate) properties.add("INDICATE");
+          
+          logMessage("  └─ 特性 UUID: ${char.uuid}");
+          logMessage("     屬性: ${properties.join(', ')}");
+        }
+      }
+      logMessage("=====================================\n");
+
+      BluetoothCharacteristic? writeCharacteristic;
+
+      // 尋找目標特性 (不區分大小寫,且移除可能的 0000 前綴)
+      for (var service in services) {
+        String serviceUuidStr = service.uuid.toString().toLowerCase();
+        String targetServiceUuid = serviceUuid.toLowerCase();
+        
+        // 移除可能的 0000 前綴和後綴,只比對核心部分
+        String extractCore(String uuid) {
+          // 提取 UUID 的核心部分 (例如: 6e400001)
+          return uuid.replaceAll('-', '').substring(0, 8);
+        }
+        
+        if (serviceUuidStr.contains(extractCore(targetServiceUuid)) || 
+            serviceUuidStr == targetServiceUuid) {
+          logMessage("✅ 找到目標服務: ${service.uuid}");
+          
+          for (BluetoothCharacteristic char in service.characteristics) {
+            String charUuidStr = char.uuid.toString().toLowerCase();
+            String targetCharUuid = writeCharUuid.toLowerCase();
+            
+            if (charUuidStr.contains(extractCore(targetCharUuid)) || 
+                charUuidStr == targetCharUuid) {
+              writeCharacteristic = char;
+              logMessage("✅ 找到寫入特性: ${char.uuid}");
+              logMessage("   特性屬性: WRITE=${char.properties.write}, WRITE_NO_RESPONSE=${char.properties.writeWithoutResponse}");
+              break;
+            }
+          }
+        }
+      }
+
+      if (writeCharacteristic == null) {
+        logMessage("❌ 找不到寫入特性 UUID: $writeCharUuid");
+        logMessage("提示: 請檢查上方列出的所有特性,確認正確的 UUID");
+        await targetDevice!.disconnect();
+        await subscription.cancel();
+        return log.toString();
+      }
+
+      // 發送訊息
+      logMessage("\n5. 嘗試發送訊息...");
+      
+      List<int> dataBytes = utf8.encode(messageToSend);
+      
+      // 根據特性的屬性選擇寫入方式
+      bool withResponse = writeCharacteristic.properties.write;
+      bool withoutResponse = writeCharacteristic.properties.writeWithoutResponse;
+      
+      logMessage("使用寫入模式: ${withResponse ? 'WITH_RESPONSE' : 'WITHOUT_RESPONSE'}");
+      
+      await writeCharacteristic.write(
+        dataBytes,
+        withoutResponse: !withResponse && withoutResponse, // 如果支援 write 就用 response,否則用 no response
+      );
+
+      logMessage("✅ 訊息發送成功！數據 '$messageToSend' 已發送到特性 $writeCharUuid");
+
+      // 等待一下再斷開連接
+      await Future.delayed(const Duration(seconds: 1));
+
+      // 斷開連接
+      logMessage("\n6. 正在斷開連接...");
+      await targetDevice!.disconnect();
+      logMessage("✅ 已斷開連接");
+
+      await subscription.cancel();
+
+    } catch (e) {
+      logMessage("❌ 發生錯誤: $e");
+      logMessage("請檢查：");
+      logMessage("1. MAC 地址是否正確？");
+      logMessage("2. Service 和 Characteristic UUID 是否正確？");
+      logMessage("3. ESP32 是否在監聽？");
+      logMessage("4. 是否已授予藍牙權限？");
+    }
+    
+    return log.toString();
+  }
+}
+
+// ==========================================================
+// BluetoothSenderScreen - Flutter UI 畫面
+// ==========================================================
+
+class BluetoothSenderScreen extends StatefulWidget {
+  const BluetoothSenderScreen({super.key});
+
+  @override
+  State<BluetoothSenderScreen> createState() => _BluetoothSenderScreenState();
+}
+
+class _BluetoothSenderScreenState extends State<BluetoothSenderScreen> {
+  final TextEditingController _messageController = TextEditingController(text: "8");
+  String _logOutput = "準備發送訊息...\n";
+  bool _isSending = false;
+
+  @override
+  void dispose() {
+    _messageController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _sendMessage() async {
+    if (_isSending) return;
+
+    setState(() {
+      _isSending = true;
+      _logOutput = "開始發送...\n";
+    });
+
+    print("=== 開始發送藍牙訊息 ===");  // Terminal 輸出
+    String message = _messageController.text;
+    print("發送訊息: $message");  // Terminal 輸出
+    
+    String result = await SenderBLEService.sendBluetoothMessage(message);
+
+    setState(() {
+      _logOutput = result;
+      _isSending = false;
+    });
+    
+    print("=== 發送流程結束 ===");  // Terminal 輸出
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('BLE 訊息發送'),
+        backgroundColor: Colors.blue,
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // 輸入訊息
+            TextField(
+              controller: _messageController,
+              decoration: const InputDecoration(
+                labelText: '要發送的訊息',
+                border: OutlineInputBorder(),
+                hintText: '輸入要發送的訊息',
+              ),
+            ),
+            const SizedBox(height: 16),
+            
+            // 發送按鈕
+            ElevatedButton(
+              onPressed: _isSending ? null : _sendMessage,
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                backgroundColor: Colors.blue,
+              ),
+              child: _isSending
+                  ? const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        ),
+                        SizedBox(width: 12),
+                        Text('發送中...', style: TextStyle(fontSize: 16)),
+                      ],
+                    )
+                  : const Text('發送訊息', style: TextStyle(fontSize: 16)),
+            ),
+            
+            const SizedBox(height: 24),
+            const Text(
+              '執行日誌：',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            
+            // 日誌輸出區域
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.grey[100],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey[300]!),
+                ),
+                child: SingleChildScrollView(
+                  child: Text(
+                    _logOutput,
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
