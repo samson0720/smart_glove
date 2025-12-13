@@ -65,53 +65,53 @@ class PlaceSuggestion {
   }
 }
 
-/// 當導航成功開始時觸發此函式
-  void _onNavigationStarted(List steps) {
-    debugPrint("🚀 [Event Trigger] Navigation has started!");
+// /// 當導航成功開始時觸發此函式
+//   void _onNavigationStarted(List steps) {
+//     debugPrint("🚀 [Event Trigger] Navigation has started!");
 
-    debugPrint("✅🚀✅✅🚀✅✅🚀✅✅🚀✅");
-    // DistanceBLEService.sendAuto(1);
+//     debugPrint("✅🚀✅✅🚀✅✅🚀✅✅🚀✅");
+//     // DistanceBLEService.sendAuto(1);
     
-String firstTurnDirection = "straight"; // 預設直行
-    String? instruction;
+//     String firstTurnDirection = "straight"; // 預設直行
+//     String? instruction;
 
-    // 遍歷所有步驟，尋找第一個有明確轉彎指示的步驟
-    for (var step in steps) {
-      // maneuver 是 Google API 提供的標準轉彎指令 (例如: turn-left, turn-right)
-      String? maneuver = step['maneuver']; 
+//     // 遍歷所有步驟，尋找第一個有明確轉彎指示的步驟
+//     for (var step in steps) {
+//       // maneuver 是 Google API 提供的標準轉彎指令 (例如: turn-left, turn-right)
+//       String? maneuver = step['maneuver']; 
       
-      if (maneuver != null && maneuver.isNotEmpty) {
-        if (maneuver.contains('left')) {
-          firstTurnDirection = "left";
-          instruction = step['html_instructions'];
-          break; // 找到第一個轉彎就停止
-        } else if (maneuver.contains('right')) {
-          firstTurnDirection = "right";
-          instruction = step['html_instructions'];
-          break; // 找到第一個轉彎就停止
-        }
-      }
-    }
+//       if (maneuver != null && maneuver.isNotEmpty) {
+//         if (maneuver.contains('left')) {
+//           firstTurnDirection = "left";
+//           instruction = step['html_instructions'];
+//           break; // 找到第一個轉彎就停止
+//         } else if (maneuver.contains('right')) {
+//           firstTurnDirection = "right";
+//           instruction = step['html_instructions'];
+//           break; // 找到第一個轉彎就停止
+//         }
+//       }
+//     }
 
-    // --- 觸發對應事件 ---
-    debugPrint("🔍 Detected First Turn: $firstTurnDirection");
+//     // --- 觸發對應事件 ---
+//     debugPrint("🔍 Detected First Turn: $firstTurnDirection");
     
-    if (firstTurnDirection == "left") {
-      // TODO: 這裡呼叫左轉的 BLE 指令
-      // BLEService().sendVibrateCommand(2); // 假設 2 是左轉
-      debugPrint("⬅️ 準備發送：左轉訊號");
-      debugPrint("即將左轉"); // 測試用 Toast
-      DistanceBLEService.sendAuto(4);
-    } else if (firstTurnDirection == "right") {
-      // TODO: 這裡呼叫右轉的 BLE 指令
-      // BLEService().sendVibrateCommand(1); // 假設 1 是右轉
-      debugPrint("➡️ 準備發送：右轉訊號");
-      debugPrint("即將右轉"); // 測試用 Toast
-      DistanceBLEService.sendAuto(2);
-    } else {
-      debugPrint("⬆️ 目前沒有急轉彎，保持直行");
-    }
-  }
+//     if (firstTurnDirection == "left") {
+//       // TODO: 這裡呼叫左轉的 BLE 指令
+//       // BLEService().sendVibrateCommand(2); // 假設 2 是左轉
+//       debugPrint("⬅️ 準備發送：左轉訊號");
+//       debugPrint("即將左轉"); // 測試用 Toast
+//       DistanceBLEService.sendAuto(4);
+//     } else if (firstTurnDirection == "right") {
+//       // TODO: 這裡呼叫右轉的 BLE 指令
+//       // BLEService().sendVibrateCommand(1); // 假設 1 是右轉
+//       debugPrint("➡️ 準備發送：右轉訊號");
+//       debugPrint("即將右轉"); // 測試用 Toast
+//       DistanceBLEService.sendAuto(2);
+//     } else {
+//       debugPrint("⬆️ 目前沒有急轉彎，保持直行");
+//     }
+//   }
 
 // -----------------------------------------------------------------------------
 // MAIN APP
@@ -213,6 +213,9 @@ class _MapScreenState extends State<MapScreen> {
   List<TurnPoint> _turnPoints = []; // Parsed turn points from route
   int _lastSent50mTurnIndex = -1; // Prevent duplicate 50m commands
   int _lastSent5mTurnIndex = -1; // Prevent duplicate 5m commands
+
+  // 用來記錄上一次呼叫 DistanceBLEService.sendAuto 的時間
+  DateTime? _lastAutoSendTime;
 
 
   // Custom Marker
@@ -518,7 +521,7 @@ class _MapScreenState extends State<MapScreen> {
             _lastSent5mTurnIndex = -1; // Reset
           });
 
-          _onNavigationStarted(leg['steps']);
+          // _onNavigationStarted(leg['steps']);
 
           // Initial camera: Focus on USER's current position (not route start)
           final controller = await _controller.future;
@@ -535,7 +538,7 @@ class _MapScreenState extends State<MapScreen> {
             ),
           ));
 
-          _onNavigationStarted(leg['steps']);
+          // _onNavigationStarted(leg['steps']);
 
           // Force arrow marker creation immediately
           if (_currentPosition != null) {
@@ -1282,8 +1285,69 @@ class _MapScreenState extends State<MapScreen> {
       }
   }
 
-  /// Check distance to turns and send vibration if close
-  void _checkAndSendVibration(Position position) {
+  // /// Check distance to turns and send vibration if close
+  // void _checkAndSendVibration(Position position) {
+  //   LatLng currentPos = LatLng(position.latitude, position.longitude);
+
+  //   for (int i = 0; i < _turnPoints.length; i++) {
+  //     TurnPoint turn = _turnPoints[i];
+  //     double distance = SafetyService().calculateDistance(
+  //       currentPos.latitude, currentPos.longitude,
+  //       turn.position.latitude, turn.position.longitude,
+  //     );
+
+  //     // --- 5 Meter Check (Imminent Turn) ---
+  //     // Has the 5m signal for this turn been sent? If not, check distance.
+  //     if (i > _lastSent5mTurnIndex) {
+  //       if (distance < 5000000) {
+  //         BLEService().sendVibrateCommand(turn.type); // 1=Right, 2=Left
+  //         _lastSent5mTurnIndex = i;
+
+  //         debugPrint("✅🚀✅✅🚀✅✅🚀✅✅🚀✅");
+  //         debugPrint("✅🚀✅✅🚀✅✅🚀✅✅🚀✅");
+  //         debugPrint("✅🚀✅✅🚀✅✅🚀✅✅🚀✅");
+  //         debugPrint("✅🚀✅✅🚀✅✅🚀✅✅🚀✅");
+  //         debugPrint("✅🚀✅✅🚀✅✅🚀✅✅🚀✅");
+  //         debugPrint("✅🚀✅✅🚀✅✅🚀✅✅🚀✅");
+  //         debugPrint("✅🚀✅✅🚀✅✅🚀✅✅🚀✅");
+  //         debugPrint("✅🚀✅✅🚀✅✅🚀✅✅🚀✅");
+  //         debugPrint("✅🚀✅✅🚀✅✅🚀✅✅🚀✅");
+
+  //         if (turn.type == 1) {
+  //           DistanceBLEService.sendAuto(2);
+  //         }
+  //         else {
+  //           DistanceBLEService.sendAuto(4);
+  //         }
+
+          
+
+  //         print('[BLE] 📳 Sent IMMINENT (5m) vibration for turn $i: ${turn.instruction}');
+          
+  //         // Also mark 50m as sent to prevent it from sending after the 5m one.
+  //         if (i > _lastSent50mTurnIndex) {
+  //           _lastSent50mTurnIndex = i;
+  //         }
+  //         continue; // Done with this turn, check next one
+  //       }
+  //     }
+
+  //     // // --- 50 Meter Check (Approaching Turn) ---
+  //     // // Has the 50m signal for this turn been sent? If not, check distance.
+  //     // if (i > _lastSent50mTurnIndex) {
+  //     //   if (distance < 50) {
+  //     //     BLEService().sendVibrateCommand(4); // 4 = Imminent Turn Signal
+  //     //     _lastSent50mTurnIndex = i;
+  //     //     print('[BLE] 📳 Sent APPROACHING (50m) vibration for turn $i: ${turn.instruction}');
+  //     //     continue; // Done with this turn, check next one
+  //     //   }
+  //     // }
+  //   }
+  // }
+
+
+
+void _checkAndSendVibration(Position position) {
     LatLng currentPos = LatLng(position.latitude, position.longitude);
 
     for (int i = 0; i < _turnPoints.length; i++) {
@@ -1294,33 +1358,55 @@ class _MapScreenState extends State<MapScreen> {
       );
 
       // --- 5 Meter Check (Imminent Turn) ---
-      // Has the 5m signal for this turn been sent? If not, check distance.
       if (i > _lastSent5mTurnIndex) {
-        if (distance < 5) {
+        // 注意：這裡你原本寫 5000000 (5000公里)，如果是測試用請保留，正式環境記得改回 5 或 10
+        if (distance < 5000000) { 
           BLEService().sendVibrateCommand(turn.type); // 1=Right, 2=Left
           _lastSent5mTurnIndex = i;
+
+          debugPrint("✅🚀✅✅🚀✅✅🚀✅✅🚀✅");
+          // ... (省略中間的 debugPrint) ...
+          debugPrint("✅🚀✅✅🚀✅✅🚀✅✅🚀✅");
+
+          // ==========================================
+          // 🔥 修改區域開始：加入 10 秒冷卻計時器 🔥
+          // ==========================================
+          DateTime now = DateTime.now();
+          
+          // 如果是第一次發送 (_lastAutoSendTime 為空) 
+          // 或者 距離上次發送已經超過 10 秒
+          if (_lastAutoSendTime == null || now.difference(_lastAutoSendTime!).inSeconds >= 1) {
+            
+            if (turn.type == 1) {
+              DistanceBLEService.sendAuto(2);
+            } else {
+              DistanceBLEService.sendAuto(4);
+            }
+            
+            // 更新最後發送時間為現在
+            _lastAutoSendTime = now;
+            print('[BLE] ⏱️ Auto command sent (Timer updated)');
+            
+          } else {
+            print('[BLE] ⏳ Skipped Auto command (Less than 10s interval)');
+          }
+          // ==========================================
+          // 🔥 修改區域結束 🔥
+          // ==========================================
+
           print('[BLE] 📳 Sent IMMINENT (5m) vibration for turn $i: ${turn.instruction}');
           
-          // Also mark 50m as sent to prevent it from sending after the 5m one.
           if (i > _lastSent50mTurnIndex) {
             _lastSent50mTurnIndex = i;
           }
-          continue; // Done with this turn, check next one
-        }
-      }
-
-      // --- 50 Meter Check (Approaching Turn) ---
-      // Has the 50m signal for this turn been sent? If not, check distance.
-      if (i > _lastSent50mTurnIndex) {
-        if (distance < 50) {
-          BLEService().sendVibrateCommand(4); // 4 = Imminent Turn Signal
-          _lastSent50mTurnIndex = i;
-          print('[BLE] 📳 Sent APPROACHING (50m) vibration for turn $i: ${turn.instruction}');
-          continue; // Done with this turn, check next one
+          continue; 
         }
       }
     }
   }
+
+
+
 
   void _triggerDemoMode() {
     if (_currentPosition == null) {
