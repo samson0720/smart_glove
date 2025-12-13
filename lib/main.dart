@@ -19,6 +19,9 @@ import 'widgets/biker_hud.dart'; // Added
 import 'package:geolocator/geolocator.dart'; // Ensure geolocator is imported
 import 'utils/map_style.dart'; // Added Night Mode style
 
+
+import 'ble_sender_distance.dart';
+
 // -----------------------------------------------------------------------------
 // CONFIGURATION
 // -----------------------------------------------------------------------------
@@ -161,6 +164,12 @@ class _MapScreenState extends State<MapScreen> {
   // BLE Vibration Control
   List<TurnPoint> _turnPoints = []; // Parsed turn points from route
   int _lastSentTurnIndex = -1; // Prevent duplicate commands
+
+  int _lastSent50mTurnIndex = -1; // Prevent duplicate 50m commands
+  int _lastSent5mTurnIndex = -1; // Prevent duplicate 5m commands
+
+  // 用來記錄上一次呼叫 DistanceBLEService.sendAuto 的時間
+  DateTime? _lastAutoSendTime;
 
 
   // Custom Marker
@@ -389,6 +398,11 @@ class _MapScreenState extends State<MapScreen> {
   // ---------------------------------------------------------------------------
 
   Future<void> _startNavigation() async {
+
+    DistanceBLEService.sendAuto(10);
+    await Future.delayed(const Duration(seconds: 5));
+
+    
     if (_currentPosition == null || _selectedLocation == null) {
       _showError('Waiting for location...');
       return;
@@ -1216,14 +1230,29 @@ class _MapScreenState extends State<MapScreen> {
         turn.position.latitude, turn.position.longitude,
       );
 
-      if (distance < 50) { // Within 50m
-        BLEService().sendVibrateCommand(turn.type);
+      if (distance < 50000) { // Within 50m
+
+        //
+        if (turn.type == 1) {
+          DistanceBLEService.sendAuto(1);   // 右
+        } else if (turn.type == 2) {
+          DistanceBLEService.sendAuto(2);   // 左
+        }
+        else if (turn.type == 3) {
+          DistanceBLEService.sendAuto(3);   // 直
+        }
+        else if (turn.type == 0) {
+          DistanceBLEService.sendAuto(10);   // 停
+        }
+        // BLEService().sendVibrateCommand(turn.type);
+        
         _lastSentTurnIndex = i;
         print('[BLE] 📳 Sent vibration for turn $i: ${turn.instruction} (${distance.toStringAsFixed(0)}m)');
         break; // Only send one at a time
       }
     }
   }
+  
 
   void _triggerDemoMode() {
     if (_currentPosition == null) {
